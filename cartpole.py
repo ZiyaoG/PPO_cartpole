@@ -1,18 +1,15 @@
 """
-Minimal CartPole simulator (classic control equations, Gym-compatible constants).
+Minimal CartPole simulator (classic control equations).
 State: [x, x_dot, theta, theta_dot]. theta = 0 means pole upright.
-Actions: 0 = push left, 1 = push right (same convention as Gym).
+Action: horizontal force on the cart (Newtons), clipped to ±force_mag.
 """
 
 from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import Literal
 
 import numpy as np
-
-Action = Literal[0, 1]
 
 
 @dataclass
@@ -20,11 +17,11 @@ class CartPoleParams:
     gravity: float = 9.8
     mass_cart: float = 1.0
     mass_pole: float = 0.1
-    pole_half_length: float = 0.5  # Gym calls this `length`; it's pivot-to-COM distance
-    force_mag: float = 10.0
+    pole_half_length: float = 0.5  # pivot-to-COM distance
+    force_mag: float = 10.0  # max |horizontal force| applied each step
     dt: float = 0.02
     x_threshold: float = 2.4
-    theta_threshold_rad: float = 12 * math.pi / 180
+    theta_threshold_rad: float = 20 * math.pi / 180
 
 
 class CartPoleEnv:
@@ -44,9 +41,10 @@ class CartPoleEnv:
             abs(x) > self.p.x_threshold or abs(theta) > self.p.theta_threshold_rad
         )
 
-    def step(self, action: Action) -> tuple[np.ndarray, float, bool, dict]:
+    def step(self, action: float | np.ndarray) -> tuple[np.ndarray, float, bool, dict]:
         x, x_dot, theta, theta_dot = self.state
-        force = self.p.force_mag if action == 1 else -self.p.force_mag
+        force = float(np.asarray(action, dtype=np.float64).reshape(-1)[0])
+        force = float(np.clip(force, -self.p.force_mag, self.p.force_mag))
 
         mp, mc = self.p.mass_pole, self.p.mass_cart
         L = self.p.pole_half_length
