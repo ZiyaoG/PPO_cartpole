@@ -2,6 +2,7 @@
 Minimal CartPole simulator (classic control equations).
 State: [x, x_dot, theta, theta_dot]. theta = 0 means pole upright.
 Action: horizontal force on the cart (Newtons), clipped to ±force_mag.
+Cart friction: viscous drag ~ -cart_viscous * x_dot (N). Pole: ~ -pole_viscous * theta_dot (rad/s²).
 """
 
 from __future__ import annotations
@@ -19,6 +20,8 @@ class CartPoleParams:
     mass_pole: float = 0.1
     pole_half_length: float = 0.5  # pivot-to-COM distance
     force_mag: float = 10.0  # max |horizontal force| applied each step
+    cart_viscous: float = 0.5  # N/(m/s); ~none matches classic Gym; 1.0 makes balancing much harder
+    pole_viscous: float = 0.1  # scale on joint damping in θ̈
     dt: float = 0.02
     x_threshold: float = 2.4
     theta_threshold_rad: float = 20 * math.pi / 180
@@ -56,10 +59,12 @@ class CartPoleEnv:
         cost = math.cos(theta)
         sint = math.sin(theta)
 
-        temp = (force + pole_mass_length * theta_dot**2 * sint) / total
+        friction = -self.p.cart_viscous * x_dot
+        temp = (force + friction + pole_mass_length * theta_dot**2 * sint) / total
         theta_acc = (g * sint - cost * temp) / (
             L * (4.0 / 3.0 - mp * cost**2 / total)
         )
+        theta_acc -= self.p.pole_viscous * theta_dot
         x_acc = temp - pole_mass_length * theta_acc * cost / total
 
         x += dt * x_dot
