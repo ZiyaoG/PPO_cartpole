@@ -58,6 +58,7 @@ def run_episode(
         "reward_per_step": np.array(rewards),
         "total_reward": total,
         "steps": controlled_steps,
+        "dt": env.p.dt,
     }
 
 
@@ -78,8 +79,10 @@ def plot_rollout(history: dict, title: str = "Rollout") -> None:
     plt.show()
 
 
-def animate_rollout(history: dict, interval_ms: int = 30) -> None:
+def animate_rollout(history: dict, interval_ms: int | None = None) -> None:
     """Crude side-view stick figure; good enough to see failures."""
+    if interval_ms is None:
+        interval_ms = int(round(1000 * history.get("dt", 0.02)))
     fig, ax = plt.subplots(figsize=(6, 3))
     cart_w = 0.3
     x_abs_max = float(np.max(np.abs(history["x"]))) + cart_w / 2 + 0.2

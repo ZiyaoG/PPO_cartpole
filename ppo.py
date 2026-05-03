@@ -30,12 +30,12 @@ class PPOConfig:
     gamma: float = 0.99
     lam: float = 0.95  # GAE lambda
     clip_eps: float = 0.2
-    lr: float = 3e-4
+    lr: float = 6e-4
     rollout_steps: int = 2048
     minibatch_size: int = 256
     epochs_per_rollout: int = 10
-    vf_coef: float = 0.5  # critic loss scale
-    ent_coef: float = 1e-3  # raise slightly (e.g. 1e-3) if you want entropy bonus
+    vf_coef: float = 0.7  # critic loss scale
+    ent_coef: float = 1e-2  # raise slightly (e.g. 1e-3) if you want entropy bonus
 
 
 cfg = PPOConfig()
@@ -202,7 +202,7 @@ def collect_rollout(env: CartPoleEnv, policy: ActorCritic, steps: int, device: t
         next_obs, rew, terminated, _ = env.step(action_np)
 
         obs_list.append(obs.astype(np.float32))
-        act_list.append(u.cpu())
+        act_list.append(u.cpu().squeeze())
         logp_list.append(log_prob.cpu())
         rew_list.append(rew)
         done_list.append(float(terminated))
@@ -255,6 +255,9 @@ def train_ppo(env: CartPoleEnv, policy: ActorCritic, opt: optim.Optimizer, devic
     policy.train()
     T = obs_all.shape[0]
     idx = torch.arange(T, device=device)
+    total_kl = 0.0
+    total_clipped = 0
+    total_samples = 0
 
     for _ in range(cfg.epochs_per_rollout):
         perm = idx[torch.randperm(T)]
@@ -267,6 +270,13 @@ def train_ppo(env: CartPoleEnv, policy: ActorCritic, opt: optim.Optimizer, devic
             ret_mb = returns[mb]
 
             new_lp, vals_mb, entropy = evaluate_actions(policy, obs_mb, act_mb)
+            kl = torch.mean(old_lp_mb - new_lp)
+            total_kl += float(kl.detach()) * obs_mb.shape[0]
+
+            ratio = torch.exp(new_lp - old_lp_mb)
+            clipped = (ratio > 1.0 + cfg.clip_eps) | (ratio < 1.0 - cfg.clip_eps)
+            total_clipped += int(clipped.sum().item())
+            total_samples += obs_mb.shape[0]
 
             pi_loss = clipped_policy_loss(old_lp_mb, new_lp, adv_mb, cfg.clip_eps)
             v_loss = value_loss(vals_mb, ret_mb)
@@ -278,6 +288,11 @@ def train_ppo(env: CartPoleEnv, policy: ActorCritic, opt: optim.Optimizer, devic
             loss.backward()
             nn.utils.clip_grad_norm_(policy.parameters(), max_norm=0.5)
             opt.step()
+
+    avg_kl = total_kl / total_samples if total_samples > 0 else 0.0
+    clip_frac = total_clipped / total_samples if total_samples > 0 else 0.0
+    assert 0.0 <= clip_frac <= 1.0, f"clip_frac out of bounds: {clip_frac}"
+    return avg_kl, clip_frac
 
 
 def eval_mean_return(env: CartPoleEnv, policy: ActorCritic, episodes: int = 5, device=None):
@@ -314,9 +329,11 @@ def main():
 
     try:
         for it in range(200):
-            train_ppo(env, policy, optimizer, device)
+            avg_kl, clip_frac = train_ppo(env, policy, optimizer, device)
             mean_ret = eval_mean_return(env, policy, episodes=5, device=device)
-            print(f"iter {it:03d}  eval_mean_return≈ {mean_ret:.1f}")
+            print(
+                f"iter {it:03d}  eval_mean_return≈ {mean_ret:.1f}  avg_kl≈ {avg_kl:.6f}  clip_frac≈ {clip_frac:.4f}  clip_pct≈ {clip_frac * 100:.1f}%"
+            )
 
             torch.save(
                 {"policy_state_dict": policy.state_dict(), "iter": it, "eval_mean_return": mean_ret},
